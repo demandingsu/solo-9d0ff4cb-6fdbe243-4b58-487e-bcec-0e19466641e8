@@ -4,6 +4,11 @@ services:
     image: coldchain-closure-checker:latest
     ports:
       - "8000:8000"
+    environment:
+      # 人工纠偏 SQLite 库位置（挂载命名卷，容器重启后纠偏记录保留）
+      CORRECTION_DB_PATH: /data/corrections.db
+    volumes:
+      - correction-data:/data
     depends_on:
       sample-site:
         condition: service_started
@@ -21,3 +26,6 @@ services:
 networks:
   closure-net:
     driver: bridge
+
+volumes:
+  correction-data:

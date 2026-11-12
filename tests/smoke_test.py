@@ -26,6 +26,8 @@ def show(name, data):
         print("  clear  :", c["road_id"], c["direction"])
     for f in data["failures"]:
         print("  FAIL   :", f["stage"], f["url"], f["reason"])
+    for p in data.get("pending_review", []):
+        print("  PENDING:", p["url"], p["reason"])
     print()
     return data
 

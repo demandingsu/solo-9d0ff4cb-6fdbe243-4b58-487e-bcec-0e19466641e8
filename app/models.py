@@ -1,7 +1,7 @@
-"""Pydantic 模型：请求路段与响应结构。"""
+"""Pydantic 模型：请求路段、纠偏请求与响应结构。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -81,6 +81,16 @@ class FetchFailure(BaseModel):
     reason: str
 
 
+class PendingReview(BaseModel):
+    """待复核：旧纠偏所绑定的内容哈希已与当前页面不符（原文已变化）。
+
+    此时既不套用旧纠偏，也不采信未经复核的自动解析，必须人工重新核正。
+    """
+
+    url: str
+    reason: str
+
+
 class CheckResponse(BaseModel):
     status: CheckStatus
     timezone_note: str = "公告时间均按北京时间(UTC+8)解释"
@@ -88,4 +98,79 @@ class CheckResponse(BaseModel):
     blocked: list[BlockedResult] = Field(default_factory=list)
     clear: list[ClearResult] = Field(default_factory=list)
     failures: list[FetchFailure] = Field(default_factory=list)
+    pending_review: list[PendingReview] = Field(default_factory=list)
     message: Optional[str] = None
+
+
+class CorrectionRequest(BaseModel):
+    """人工纠偏：提交详情 URL 与核正后的封闭字段。
+
+    服务会实时读取该详情页，以页面内容的 SHA-256 作为记录生效条件。
+    """
+
+    detail_url: str = Field(..., description="需要核正的公告详情页 URL")
+    road_id: str = Field(..., min_length=1, description="核正后的路段编号")
+    direction: str = Field(..., min_length=1, description="核正后的方向，如 上行/下行/双向")
+    effective_start: date = Field(..., description="核正后的生效开始日")
+    effective_end: Optional[date] = Field(None, description="生效结束日；留空表示长期有效")
+    weekdays: list[int] = Field(
+        ..., min_length=1, description="每周封闭日：0=周一 … 6=周日"
+    )
+    clock_start: time = Field(..., description="核正后的每日封闭开始钟点 HH:MM")
+    clock_end: time = Field(..., description="核正后的每日封闭结束钟点 HH:MM")
+    cross_midnight: Optional[bool] = Field(
+        None,
+        description=(
+            "是否跨午夜（封闭归属开始当天）。留空时自动推断："
+            "结束钟点不晚于开始钟点即视为跨午夜"
+        ),
+    )
+
+    @field_validator("detail_url")
+    @classmethod
+    def _http_url(cls, v: str) -> str:
+        v = v.strip()
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("detail_url 必须是 http/https 绝对地址")
+        return v
+
+    @field_validator("weekdays")
+    @classmethod
+    def _weekday_range(cls, v: list[int]) -> list[int]:
+        bad = [d for d in v if not 0 <= d <= 6]
+        if bad:
+            raise ValueError("封闭日取值范围为 0(周一) 到 6(周日)")
+        if len(set(v)) != len(v):
+            raise ValueError("封闭日存在重复项")
+        return sorted(v)
+
+    @field_validator("effective_end")
+    @classmethod
+    def _end_after_start(cls, v: Optional[date], info) -> Optional[date]:
+        start = info.data.get("effective_start")
+        if v is not None and start is not None and v < start:
+            raise ValueError("生效结束日不能早于开始日")
+        return v
+
+    def resolved_cross_midnight(self) -> bool:
+        if self.cross_midnight is not None:
+            return self.cross_midnight
+        return self.clock_end <= self.clock_start
+
+
+class CorrectionResponse(BaseModel):
+    """纠偏写入结果：回显核正字段及其绑定的内容哈希。"""
+
+    detail_url: str
+    content_hash: str = Field(..., description="提交时详情页正文的 SHA-256（hex）")
+    road_id: str
+    direction: str
+    effective_start: date
+    effective_end: Optional[date]
+    weekdays: list[int]
+    clock_start: time
+    clock_end: time
+    cross_midnight: bool
+    title: str
+    created_at: datetime
+    updated_at: datetime

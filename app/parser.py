@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -220,3 +221,23 @@ def normalize_url(url: str) -> str:
     """去除 fragment，便于分页去重。"""
     p = urlparse(url)
     return urlunparse((p.scheme, p.netloc, p.path, p.params, p.query, ""))
+
+
+def content_hash(html: str) -> str:
+    """详情页内容的 SHA-256（hex），作为人工纠偏的生效条件。
+
+    哈希基于原始响应正文计算，原文任何字节变化都会改变哈希，
+    从而让绑定旧内容的纠偏记录自动失效。
+    """
+    return hashlib.sha256(html.encode("utf-8")).hexdigest()
+
+
+def extract_title(html: str) -> str:
+    """宽松提取详情标题（h1/h2，其次 title 标签），供纠偏记录回显。"""
+    soup = BeautifulSoup(html, "html.parser")
+    tag = soup.find(["h1", "h2"])
+    if tag and tag.get_text(strip=True):
+        return tag.get_text(" ", strip=True)
+    if soup.title and soup.title.get_text(strip=True):
+        return soup.title.get_text(" ", strip=True)
+    return ""

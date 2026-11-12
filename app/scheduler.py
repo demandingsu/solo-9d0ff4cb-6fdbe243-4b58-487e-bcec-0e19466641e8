@@ -7,6 +7,7 @@ from .models import (
     CheckResponse,
     ClearResult,
     FetchFailure,
+    PendingReview,
     RoadSegment,
 )
 from .parser import ClosureAnnouncement
@@ -26,6 +27,9 @@ def build_response(
     blocked: list[BlockedResult] = []
     clear: list[ClearResult] = []
     has_failure = bool(scrape_result.failures)
+    has_pending = bool(scrape_result.pending_review)
+    # 采集失败或有待复核地址时，信息不完整，绝不允许声明畅通
+    incomplete = has_failure or has_pending
 
     # 按归一化路段编号建索引
     index: dict[str, list[ClosureAnnouncement]] = {}
@@ -68,8 +72,8 @@ def build_response(
                     announcements=hit_urls,
                 )
             )
-        elif not has_failure:
-            # 只有全部采集成功时才允许声明“畅通”
+        elif not incomplete:
+            # 只有全部采集成功且无待复核时才允许声明“畅通”
             clear.append(
                 ClearResult(
                     road_id=seg.road_id,
@@ -83,8 +87,20 @@ def build_response(
         FetchFailure(url=f.url, stage=f.stage, reason=f.reason)
         for f in scrape_result.failures
     ]
+    pending = [
+        PendingReview(url=p.url, reason=p.reason)
+        for p in scrape_result.pending_review
+    ]
 
-    if has_failure:
+    if has_pending:
+        status = "undetermined"
+        urls = "、".join(p.url for p in pending)
+        message = (
+            f"{len(pending)} 个公告内容已变化且旧纠偏失效（{urls}），"
+            "需人工重新核正；相关结论暂不采信未经复核的自动解析。"
+            "已确认受阻的路段仍见 blocked，未声明全程畅通。"
+        )
+    elif has_failure:
         status = "undetermined"
         message = (
             f"{len(failures)} 个地址采集失败，相关路段无法判定；"
@@ -103,6 +119,7 @@ def build_response(
         blocked=blocked,
         clear=clear,
         failures=failures,
+        pending_review=pending,
         message=message,
     )
 
